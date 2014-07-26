@@ -4,10 +4,14 @@ import sys, os, getopt
 import httplib2, simplejson
 from oauth2client import client
 from apiclient.discovery import build
+import time
+import logging
 
 from cStringIO import StringIO
 from docutils.core import publish_string
 from lxml import etree
+
+logging.basicConfig()
 
 ACCESS_TOKEN_FILE='access_token'
 
@@ -33,7 +37,7 @@ def list_blogs(service, http, target_name=None):
     print('')
     print('List of blogs: ')
     target_id = None
-    for blog in service.blogs().listByUser(userId='self').execute(http)['items']:
+    for blog in service.blogs().listByUser(userId='self').execute()['items']:
         print('* ' + blog['name'])
         if target_name is not None and target_name == blog['name']:
             target_id = blog['id']
@@ -41,20 +45,28 @@ def list_blogs(service, http, target_name=None):
 
 def publish_or_update(service, http, blog_id, title, body):
     post_id = None
-    search_result = service.posts().search(blogId=blog_id, q=title, orderBy=None, fetchBodies=False).execute(http)['items']
-    for result in search_result:
-        if result['title'] == title:
-            post_id = result['id']
-            break
+    print("searching in blog id: %s" % blog_id)
+    search_result = service.posts().search(blogId=blog_id, q=title, orderBy="updated", fetchBodies=False).execute()
+    print(search_result)
+    if 'items' in search_result:
+        for result in search_result['items']:
+            if result['title'] == title:
+                post_id = result['id']
+                break
     o_body = {'title': title, 'content': body}
     res = None
     if post_id is None:
         print('Posting: ' + title)
-        res = service.posts().insert(blogId=blog_id, body=o_body, isDraft=False)
+        res = service.posts().insert(blogId=blog_id, body=o_body, isDraft=True)
+        resource = res.execute()
+        # WTF: Google is a nerd, only scheduled posts are indexed!!!
+        pt = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() + 5 + time.altzone))
+        print('appear time %s' % pt)
+        res = service.posts().publish(blogId=blog_id, postId=resource['id'], publishDate=pt)
     else:
         print('Updating post: ' + title)
         res = service.posts().update(blogId=blog_id, postId=post_id, body=o_body)
-    res.execute(http)
+    res.execute()
 
 def parse_rst(f):
     raw_html = publish_string(f.read(), writer_name='html', settings_overrides={'generator': False, 'traceback': True, 'syntax_highlight': 'short'})
@@ -80,7 +92,7 @@ def main():
     http = httplib2.Http()
     service = login(cred, http)
     
-    user = service.users().get(userId='self').execute(http)
+    user = service.users().get(userId='self').execute()
     print('Hello ' + user['displayName'] + ', you\'re logged in successfully')
 
     blog_name = None
